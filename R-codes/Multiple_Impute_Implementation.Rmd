@@ -1,0 +1,140 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Multiple Imputation To Handle the Missing Data
+
+```{r}
+
+library(MASS)
+
+# Set parameters for the bivariate normal distribution
+
+set.seed(0)
+mu <- c(125, 125)  # Mean vector
+
+sd_x <- 25
+sd_y <- 25
+cov <- 0.6*sd_x*sd_y
+
+sigma <- matrix(c(625, cov, cov, 625), nrow = 2)  # Covariance matrix
+
+# Number of individuals
+n <- 50
+num_samples <- 1000
+
+
+# Generate random samples from the bivariate normal distribution
+samples <- mvrnorm(n = n, mu = mu, Sigma = sigma)
+
+
+```
+
+Creating the Missing Datasets
+
+Missing Completely At Random (MCAR)
+
+```{r}
+X <- samples[,1]
+Y <- samples[,2]
+
+
+set.seed(0)
+# We implement the code to get MCAR Data for the month of February. 
+
+
+# Probability of missingness
+p_missing <- 0.8
+
+# Generate MCAR dataset Y1
+Y1 <- ifelse(runif(length(Y)) < p_missing, NA, Y)
+
+
+data1 <- matrix(c(X, Y1), ncol = 2)
+```
+
+
+Missing At Random (MAR)
+```{r}
+
+threshold <- 140
+Y2 <- ifelse(X<threshold, NA, Y)
+data2 <- matrix(c(X, Y2), ncol = 2)
+
+
+```
+
+Missing Not At Random (MNAR)
+
+```{r}
+Y3 <- ifelse(Y<threshold, NA, Y)
+data3 <- matrix(c(X, Y3), ncol = 2)
+
+```
+
+```{r}
+#ind = sample(1:50, replace = T)
+
+#dt = data1[ind,]
+
+#colnames(data1) <- c("X","Y")
+
+#data1 <- as.data.frame(data1)
+
+#reg <- lm(Y~X, data = data1[ind,])
+
+```
+
+
+
+```{r}
+#print(summary(reg))
+```
+
+
+## Multiple Imputation Algorithm 
+
+```{r}
+
+imput <- function(data, M){
+  
+  n = nrow(data)
+
+  missing_idx <- which(is.na(data[,2]))
+  observed_idx <- which(!is.na(data[,2]))
+  
+  colnames(data) <- c("X","Y")
+  data <- as.data.frame(data)
+  
+  BetaHat <- VarThetaHat <- rep(0, M)
+  
+  for(j in 1:M){
+    data_itr <- data
+    
+    idx_sample <- sample(1:n, replace = T)
+    reg <- lm(Y~X, data = data_itr[idx_sample,])
+    data_itr[missing_idx,2] <- predict(reg,newdata=data_itr[missing_idx,1,drop=F])+rnorm(length(missing_idx),0,(summary(reg))$sigma)
+    
+    BetaHat[j] <- mean(data_itr[,2])
+    VarThetaHat[j] <- var(data_itr[,2])/n
+    
+  }
+  
+  # Applying Rubin's Rules to get the results. 
+  BetaHatBar  <- mean(BetaHat)
+  variance  <- mean(VarThetaHat)  + (1 + 1/M)* var(BetaHat)
+  
+  
+  return(structure(list(mu = BetaHatBar, Var = variance)))
+  
+}
+
+```
+
+
+```{r}
+imput(data3, M=20)
+```
+
+
