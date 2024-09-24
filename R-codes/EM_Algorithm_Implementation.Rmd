@@ -1,0 +1,338 @@
+---
+title: "EM Algorithm on Missing Data"
+output: html_notebook
+---
+## Dataset Generation 
+We will generate 1000 samples for the Systolic Blood Pressures each of size 50 for the Month of January and February. 
+
+```{r}
+library(MASS)
+
+# Set parameters for the bivariate normal distribution
+
+set.seed(0)
+mu <- c(125, 125)  # Mean vector
+
+sd_x <- 25
+sd_y <- 25
+cov <- 0.6*sd_x*sd_y
+
+sigma <- matrix(c(625, cov, cov, 625), nrow = 2)  # Covariance matrix
+
+
+n <- 50 # Number of individuals
+num_samples <- 1000 # Number of samples
+
+# Storage for the samples
+all_samples <- list()
+
+# Generate random samples iteratively from a bivariate normal distribution. 
+for (i in 1:num_samples) {
+  samples <- mvrnorm(n = n, mu = mu, Sigma = sigma)
+  all_samples[[i]] <- samples
+}
+
+# Check the first few observations of the first sample
+print(head(all_samples[[1]]))
+
+```
+
+
+'all_X' contains the data for the month of January. 'all_Y' is the data for the month of February. 
+
+```{r}
+all_X <- list()
+all_Y <- list()
+
+for (i in 1:num_samples) {
+  X_sample <- all_samples[[i]][, 1]
+  Y_sample <- all_samples[[i]][, 2]
+  all_X[[i]] <- X_sample
+  all_Y[[i]] <- Y_sample
+}
+
+# Check the first few observations of X and Y for the first sample
+print("X for the first sample:")
+print(head(all_X[[1]]))
+print("Y for the first sample:")
+print(head(all_Y[[1]]))
+```
+
+Calculating the Mean of the complete data. 
+
+```{r}
+# Take the Mean of all the samples 
+mux <- rep(0, num_samples)
+muy <- rep(0, num_samples)
+
+for (i in 1:num_samples){
+  
+  mux[i] <- mean(all_X[[i]])
+  muy[i] <- mean(all_Y[[i]])
+  
+}
+mu_X = mean(mux)
+mu_Y = mean(muy)
+
+cat("Mean for the month of January is ", mu_X)
+cat("\nMean for the month of February is ", mu_Y)
+
+```
+
+# Creating Missing Data
+Given the complete data we will now impose the conditions of Missing Completely At Random (MCAR), Missing At Random (MAR) and Missing Not At Random (MNAR) to generate missing data. Here, we create missing data only in the data of February month. 
+
+### Missing Completely At Random (MCAR)
+
+```{r}
+set.seed(0)
+# We implement the code to get MCAR Data for the month of February. 
+
+# Probability of missingness
+p_missing <- 0.8
+
+Y1 <- list()
+
+for(i in 1:num_samples){
+# Generate MCAR dataset Y1
+Y1[[i]] <- ifelse(runif(length(all_Y[[i]])) < p_missing, NA, all_Y[[i]])
+}
+
+```
+
+
+### Missing At Random (MAR)
+```{r}
+
+Y2 <- list()
+threshold <- 140
+for(i in 1:num_samples){
+  Y2[[i]] <- ifelse(all_X[[i]] < threshold, NA, all_Y[[i]])
+}
+```
+
+
+### Missing Not At Random (MNAR)
+```{r}
+Y3 <- list()
+
+threshold <- 140
+for(i in 1:num_samples){
+  Y3[[i]] <- ifelse(all_Y[[i]] < threshold, NA, all_Y[[i]])
+  
+}
+```
+
+
+
+# Data Imputation
+Given the missing data, we will the question will arises, as to which Data Imputation method should be used in each of the three cases of Missing Data.
+
+
+### Expectation Maximization (EM) Algorithm
+The EM Algorithm aims at finding the estimate of the parameter (in the bivariate normal case it is $\mu$ and $\Sigma$) that maximizes the log-likelihood of the observed data. 
+
+As the name suggests, the process consists of two steps:
+
+1. Expectation Step - This computes the expected value of the log-likelihood function given the observed data. i.e. it calculates the conditional expectation using the parameter estimate of the current iteration. 
+
+2. Maximization Step - This step computes the maximum likelihood estimate over the expectation computed in step-1. 
+
+This process is repeated iteratively till it achieves convergence. 
+
+```{r}
+
+# Expectation Step of the algorithm
+Estep <- function(all_X, all_Y, mu, sigma){
+  num_samples <- length(all_X)
+  
+  # Initialize sums
+  sum_E_x <- sum_E_y <- sum_E_x_x <- sum_E_y_y <- sum_E_x_y <- 0
+  
+  for (i in 1:num_samples) {
+    X <- all_X[[i]]
+    Y <- all_Y[[i]]
+    
+    missing_idx <- which(is.na(Y))
+    observed_idx <- which(!is.na(Y))
+    
+    
+    # Computed using the likelihood estimation method for bivariate conditional gaussian distribution. 
+    beta_21.1 = sigma[1,2] / sigma[1,1]
+    beta_20.1 = mu[2] - beta_21.1 * mu[1]
+    sigma_22.1 = sigma[2,2] - sigma[1,2]^2 / sigma[1,1]
+    
+    # Impute the Data
+    E_y = rep(0, length(Y))
+    E_y[missing_idx] = rep(beta_20.1, length(missing_idx)) + beta_21.1 * X[missing_idx]
+    E_y[observed_idx] = Y[observed_idx]
+    
+    E_x = X
+    
+    E_y_y = rep(0, length(Y))
+    E_y_y[missing_idx] = rep(sigma_22.1, length(missing_idx)) + E_y[missing_idx]^2
+    E_y_y[observed_idx] = E_y[observed_idx]^2
+    
+    E_x_x = X^2
+    
+    E_x_y = rep(0, length(Y))
+    E_x_y = E_y * E_x 
+    
+    # Update sums
+    sum_E_x = sum_E_x + mean(E_x)
+    sum_E_y = sum_E_y + mean(E_y)
+    sum_E_x_x = sum_E_x_x + mean(E_x_x)
+    sum_E_y_y = sum_E_y_y + mean(E_y_y)
+    sum_E_x_y = sum_E_x_y + mean(E_x_y)
+  }
+  
+  
+  return(structure(list(s1 = sum_E_x, s2 = sum_E_y, s11 = sum_E_x_x, s22 = sum_E_y_y, s12 = sum_E_x_y)))
+}
+
+
+# Maximization Step of the Algorithm
+Mstep <- function(X, s1, s2, s11, s22, s12){
+  n <- length(X)
+  
+  muX <- s1 / n
+  muY <- s2 / n
+  
+  sigma1 <- s11 / n - muX^2
+  sigma2 <- s22 / n - muY^2
+  sigma12 <- s12 / n - muX * muY
+  
+  mu <- c(muX, muY)
+  
+  cov_mat <- matrix(c(sigma1, sigma12, sigma12, sigma2), nrow = 2)
+  
+  return(structure(list(mu = mu, cov_mat = cov_mat)))
+}
+
+
+# Initializing the mean vector and the covariance matrix for the incomplete data. 
+
+initEM <- function(all_X, all_Y){
+  num_samples <- length(all_X)
+  
+  # Initialize sums
+  sum_X <- sum_Y <- sum_X_X <- sum_Y_Y <- sum_X_Y <- 0
+  
+  for (i in 1:num_samples) {
+    X <- all_X[[i]]
+    Y <- all_Y[[i]]
+    
+    missing_idx <- which(is.na(Y))
+    observed_idx <- which(!is.na(Y))
+    
+    sum_X <- sum_X + mean(X)
+    #print(sum_X)
+    sum_Y <- sum_Y + mean(Y[observed_idx])
+    sum_X_X <- sum_X_X + mean(X^2)
+    sum_Y_Y <- sum_Y_Y + mean(Y[observed_idx]^2)
+    sum_X_Y <- sum_X_Y + mean(X[observed_idx] * Y[observed_idx])
+  }
+  
+  muX <- sum_X / num_samples
+  muY <- sum_Y / num_samples
+  
+  
+  varx <- sum_X_X / num_samples - muX^2
+  vary <- sum_Y_Y / num_samples - muY^2
+  
+  cov_xy <- sum_X_Y / num_samples - muX * muY
+  
+  mu <- c(muX, muY)
+  
+  cov_mat <- matrix(c(varx, cov_xy, cov_xy, vary), nrow = 2)
+  
+  return(structure(list(mu = mu, cov_mat = cov_mat)))
+}
+
+
+```
+
+
+
+```{r}
+# Function to run the EM Algorithm for 150 iterations. 
+
+runEM <- function(X, Y){
+  
+  init = initEM(X, Y)
+  
+  mu_hat = init$mu
+  cov_matrix = init$cov_mat
+  error_mu=rep(0,150)
+  for(i in 1:150){
+    error_mu[i]=sqrt(sum((mu_hat-mu)^2))
+    # E step
+    E=Estep(X, Y, mu_hat, cov_matrix)
+    s1=E$s1
+    s11=E$s11
+    s2=E$s2
+    s22=E$s22
+    s12=E$s12
+    
+    # M Step 
+    M=Mstep(X, s1, s2, s11, s22, s12)
+    mu_hat=M$mu
+    #print(mu_hat)
+    cov_matrix = M$cov_mat
+  }
+  
+  
+  #corr = cov_matrix[1,2]/(sqrt(cov_matrix[1,1]) * sqrt(cov_matrix[2,2]))
+  
+  #print(mu_hat)
+  #plot(error_mu)
+  
+  
+  return(structure(list(mu_hat = mu_hat, cov_matrix = cov_matrix, error_mu = error_mu)))
+}
+
+```
+
+
+We run the EM Algorithm for the MCAR Data
+```{r}
+res1 = runEM(all_X, Y1)
+mu1 = res1$mu_hat
+cov1 = res1$cov_matrix
+corr1 = cov1[1,2]/(sqrt(cov1[1,1]) * sqrt(cov1[2,2]))
+
+
+cat("The Estimated Mean in the MCAR Data is ", mu1[2])
+cat("\nThe Estimated Variance in the MCAR Data is ", sqrt(cov1[2,2]))
+cat("\nThe Estimated Correlation in the MCAR Data is  ", corr1)
+
+```
+
+We run the EM Algorithm for the MAR Data
+```{r}
+res2 = runEM(all_X, Y2)
+mu2 = res2$mu_hat
+cov2 = res2$cov_matrix
+corr2 = cov2[1,2]/(sqrt(cov2[1,1]) * sqrt(cov2[2,2]))
+
+
+cat("The Estimated Mean in the MCAR Data is ", mu2[2])
+cat("\nThe Estimated Variance in the MCAR Data is ", sqrt(cov2[2,2]))
+cat("\nThe Estimated Correlation in the MCAR Data is  ", corr2)
+```
+
+
+We run the EM Algorithm for the MNAR Data. 
+```{r}
+res3 = runEM(all_X, Y3)
+mu3 = res3$mu_hat
+cov3 = res3$cov_matrix
+corr3 = cov3[1,2]/(sqrt(cov3[1,1]) * sqrt(cov3[2,2]))
+
+
+cat("The Estimated Mean in the MCAR Data is ", mu3[2])
+cat("\nThe Estimated Variance in the MCAR Data is ", sqrt(cov3[2,2]))
+cat("\nThe Estimated Correlation in the MCAR Data is  ", corr3)
+
+```
+
